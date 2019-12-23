@@ -115,9 +115,6 @@ class CWMSProcessor(object):
             st = self.influence_from_event(event)
             if st:
                 self.statements.append(st)
-        # In some EKBs we get two redundant relations over the same arguments,
-        # we eliminate these
-        self._remove_multi_extraction_artifacts()
 
         # Print unhandled event types
         logger.debug('Unhandled event types: %s' %
@@ -140,8 +137,6 @@ class CWMSProcessor(object):
                     event.delta.set_polarity(polarity)
                     self.statements.append(event)
 
-        self._remove_multi_extraction_artifacts()
-
     def extract_migrations(self):
         ev_types = ['ONT::MOVE', 'ONT::DEPART', 'ONT::ARRIVE']
         events = []
@@ -157,7 +152,6 @@ class CWMSProcessor(object):
             event = self.migration_from_event(event_term)
             if event is not None:
                 self.statements.append(event)
-        self._remove_multi_extraction_artifacts()
 
     def extract_correlations(self):
         correlations = self.tree.findall("EPI/[type='ONT::ASSOCIATE']")
@@ -166,8 +160,6 @@ class CWMSProcessor(object):
                                                 'NEUTRAL2', False)
             if st:
                 self.statements.append(st)
-
-        # self._remove_multi_extraction_artifacts()
 
     def _influence_from_element(self, element, element_type, subj_arg,
                                 obj_arg, is_arg):
@@ -650,8 +642,8 @@ class CWMSProcessor(object):
         sec = self.par_to_sec.get(par_id)
         return sec
 
-    def _remove_multi_extraction_artifacts(self):
-        # Build up a dict of evidence matches keys with statement UUIDs
+    def remove_multi_extraction_artifacts(self):
+        # Build up a dict of evidence matches keys with statements
         evmks = {}
         logger.debug('Starting with %d Statements.' % len(self.statements))
         for stmt in self.statements:
@@ -665,38 +657,27 @@ class CWMSProcessor(object):
                         stmt.members[0].matches_key() +
                         stmt.members[1].matches_key())
             if evmk not in evmks:
-                evmks[evmk] = [stmt.uuid]
+                evmks[evmk] = [stmt]
             else:
-                evmks[evmk].append(stmt.uuid)
-        # This is a list of groups of statement UUIDs that are redundant
-        multi_evmks = [v for k, v in evmks.items() if len(v) > 1]
-        # We now figure out if anything needs to be removed
-        to_remove = []
-        # Remove redundant statements
-        for uuids in multi_evmks:
-            # Influence statements to be removed
-            infl_stmts = [s for s in self.statements if (
-                            s.uuid in uuids and isinstance(s, Influence))]
-            infl_stmts = sorted(infl_stmts, key=lambda x: x.polarity_count(),
-                                reverse=True)
-            to_remove += [s.uuid for s in infl_stmts[1:]]
-            # Association statements to be removed
-            assn_stmts = [s for s in self.statements if (
-                            s.uuid in uuids and isinstance(s, Association))]
-            assn_stmts = sorted(assn_stmts, key=lambda x: x.polarity_count(),
-                                reverse=True)
-            # Standalone events to be removed
-            events = [s for s in self.statements if (
-                        s.uuid in uuids and isinstance(s, Event))]
-            events = sorted(events, key=lambda x: event_delta_score(x),
-                            reverse=True)
-            to_remove += [e.uuid for e in events[1:]]
+                evmks[evmk].append(stmt)
 
-        # Remove all redundant statements
-        if to_remove:
-            logger.debug('Found %d Statements to remove' % len(to_remove))
-        self.statements = [s for s in self.statements
-                           if s.uuid not in to_remove]
+        unique_stmts = []
+        # Only include unique and most detailed statements
+        for evmk, stmts in evmks.items():
+            if len(stmts) == 1:
+                unique_stmts.append(stmts[0])
+            elif all(isinstance(stmt, Influence) for stmt in stmts) or \
+                    all(isinstance(stmt, Association) for stmt in stmts):
+                unique_stmts.append(
+                    sorted(stmts, key=lambda x: x.polarity_count(),
+                           reverse=True)[0])
+            elif all(isinstance(stmt, Event) for stmt in stmts):
+                unique_stmts.append(
+                    sorted(stmts, key=lambda x: event_delta_score(x),
+                           reverse=True)[0])
+
+        logger.debug('Found %d unique statements' % len(unique_stmts))
+        self.statements = unique_stmts
 
 
 def sanitize_name(txt):
