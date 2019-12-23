@@ -75,6 +75,7 @@ def process_ekb(ekb_str):
     cp.extract_correlations()
     cp.extract_migrations()
     cp.extract_events()
+    cp.remove_multi_extraction_artifacts()
     return cp
 
 
